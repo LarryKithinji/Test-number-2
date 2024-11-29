@@ -1,0 +1,141 @@
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+from transformers import pipeline
+import re
+
+class RedditSummarizer:
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        # Initialize the summarization model
+        self.summarizer = pipeline("summarization", 
+                                 model="facebook/bart-large-cnn",
+                                 device=-1)  # Use CPU
+
+    def extract_reddit_content(self, url):
+        """Extract content from Reddit post URL"""
+        try:
+            # Convert URL to JSON API URL
+            if 'www.reddit.com' in url:
+                url = url.replace('www.reddit.com', 'api.reddit.com')
+            
+            # Add .json to the URL if not present
+            if not url.endswith('.json'):
+                url = f"{url}.json"
+            
+            response = requests.get(url, headers=self.headers)
+            data = response.json()
+            
+            # Extract post title and content
+            post_data = data[0]['data']['children'][0]['data']
+            title = post_data['title']
+            content = post_data.get('selftext', '')
+            
+            return title, content
+        except Exception as e:
+            return None, f"Error extracting content: {str(e)}"
+
+    def clean_text(self, text):
+        """Clean the text by removing special characters and extra whitespace"""
+        # Remove URLs
+        text = re.sub(r'http\S+', '', text)
+        # Remove Reddit formatting
+        text = re.sub(r'\[.*?\]|\(.*?\)', '', text)
+        # Remove extra whitespace
+        text = ' '.join(text.split())
+        return text
+
+    def summarize_text(self, text, max_length=150, min_length=50):
+        """Summarize text using HuggingFace transformers"""
+        try:
+            # Clean the text
+            cleaned_text = self.clean_text(text)
+            
+            # If text is too short, return it as is
+            if len(cleaned_text.split()) < min_length:
+                return cleaned_text
+            
+            # Generate summary
+            summary = self.summarizer(cleaned_text, 
+                                    max_length=max_length,
+                                    min_length=min_length,
+                                    do_sample=False)
+            
+            return summary[0]['summary_text']
+        except Exception as e:
+            return f"Error generating summary: {str(e)}"
+
+def main():
+    # Page configuration
+    st.set_page_config(
+        page_title="Reddit Post Summarizer",
+        page_icon="📑",
+        layout="centered"
+    )
+
+    # Initialize summarizer
+    summarizer = RedditSummarizer()
+
+    # UI Elements
+    st.title("📑 Reddit Post Summarizer")
+
+    st.markdown("""
+    This app uses AI to create summaries of Reddit posts. 
+    Simply paste a Reddit post URL below!
+    """)
+
+    # Input URL
+    url = st.text_input("Enter Reddit Post URL:", 
+                       placeholder="https://www.reddit.com/r/...")
+
+    if url:
+        with st.spinner("Fetching and summarizing content..."):
+            # Extract content
+            title, content = summarizer.extract_reddit_content(url)
+            
+            if title:
+                st.subheader("Original Post Title:")
+                st.write(title)
+                
+                if content:
+                    st.subheader("Original Content Length:")
+                    st.write(f"{len(content.split())} words")
+                    
+                    # Summarization options
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        max_length = st.slider("Max summary length (words)", 
+                                             min_value=50, 
+                                             max_value=250, 
+                                             value=150)
+                    with col2:
+                        min_length = st.slider("Min summary length (words)", 
+                                             min_value=30, 
+                                             max_value=100, 
+                                             value=50)
+                    
+                    summary = summarizer.summarize_text(content, max_length, min_length)
+                    
+                    st.subheader("Summary:")
+                    st.write(summary)
+                    
+                    # Show original content in expander
+                    with st.expander("Show Original Content"):
+                        st.write(content)
+                else:
+                    st.error("This post doesn't contain any text content to summarize.")
+            else:
+                st.error(content)  # Show error message
+
+    st.markdown("---")
+    st.markdown("""
+    Made with ❤️ using:
+    - Streamlit
+    - HuggingFace Transformers (BART-large-CNN model)
+    - Reddit API
+    """)
+
+if __name__ == "__main__":
+    main()
